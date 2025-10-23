@@ -12,7 +12,7 @@ dependencies = ["amplifier-core", "openai>=1.0.0"]
 "tool-whisper" = "amplifier_module_tool_whisper:WhisperTool"
 
 [tool.uv.sources]
-amplifier-core = { path = "../amplifier-core", editable = true }
+amplifier-core = { git = "https://github.com/microsoft/amplifier-dev", subdirectory = "amplifier-core", branch = "main" }
 
 [build-system]
 requires = ["hatchling"]
