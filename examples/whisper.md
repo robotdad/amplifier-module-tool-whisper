@@ -1,129 +1,100 @@
 ---
-profile:
-  name: whisper-transcription
-  extends: base
+bundle:
+  name: whisper-transcriber
+  version: 1.0.0
+  description: Audio transcription assistant powered by OpenAI Whisper
 
-tools:
-  - module: tool-whisper
-    source: git+https://github.com/robotdad/amplifier-module-tool-whisper@main
-    config:
-      output_dir: ~/transcripts
-      model: whisper-1
+includes:
+  - bundle: git+https://github.com/microsoft/amplifier-foundation@main
+  - bundle: git+https://github.com/robotdad/amplifier-module-tool-whisper@main
 ---
 
-# Whisper Transcription Profile
+# Whisper Transcriber
 
-Enables speech-to-text transcription using OpenAI Whisper in amplifier sessions.
+A minimal bundle that adds audio transcription to an Amplifier session using the
+OpenAI Whisper API.
 
 ## Quick Start
 
 1. Set your OpenAI API key:
    ```bash
-   export OPENAI_API_KEY=sk-...
+   export OPENAI_API_KEY="sk-..."
    ```
 
-2. Activate this profile:
+2. Run:
    ```bash
-   amplifier run --profile whisper-transcription
+   amplifier run --bundle examples/whisper.md
    ```
 
-3. Transcribe in conversation:
+3. Use in conversation:
    ```
    > Transcribe meeting-recording.mp3
+   > Transcribe ~/downloads/podcast-episode.m4a in Spanish
+   > Transcribe all MP3 files in the recordings/ directory
    ```
 
-## What It Does
+## What You Get
 
-This profile adds the `tool-whisper` module to your amplifier session, enabling the AI to:
+One tool is available in your session:
 
-- Transcribe audio files to text
-- Provide timestamped segments
-- Estimate costs before processing
-- Handle multiple languages automatically
+- **whisper** — Transcribe audio or video files to text using OpenAI Whisper.
+  Saves `.transcript.txt` to `~/transcripts/` by default.
 
-## Configuration
+## Custom Configuration
 
-The tool is configured to:
-- Save transcripts to `~/transcripts/`
-- Use Whisper's default `whisper-1` model
-- Automatically handle retries on API failures
-
-### Custom Configuration
-
-Copy this profile to `~/.amplifier/profiles/my-transcribe.md` and adjust settings:
+Override defaults by adding a `tools:` section:
 
 ```yaml
+includes:
+  - bundle: git+https://github.com/microsoft/amplifier-foundation@main
+  - bundle: git+https://github.com/robotdad/amplifier-module-tool-whisper@main
+
 tools:
   - module: tool-whisper
     source: git+https://github.com/robotdad/amplifier-module-tool-whisper@main
     config:
-      output_dir: ~/my-custom-location
-      model: whisper-1  # Currently only whisper-1 is available
+      output_dir: ~/my-transcripts
+      model: whisper-1
 ```
 
-## Example Workflows
+## File Size Limit
 
-### Transcribe a Single File
+Whisper enforces a hard **25 MB** limit per file. For longer recordings, compress first:
 
-```
-> Transcribe podcast-episode.mp3
-```
-
-The AI will:
-1. Validate the audio file
-2. Estimate the cost
-3. Transcribe using Whisper
-4. Save to ~/transcripts/
-
-### Transcribe with Language Hint
-
-```
-> Transcribe french-audio.mp3 in French
+```bash
+ffmpeg -i long-recording.wav -b:a 64k output.mp3
 ```
 
-The AI can pass language hints to improve accuracy for non-English audio.
+## Combining with youtube-dl
 
-### Batch Transcription
+When `youtube-dl` downloads a video but finds no YouTube transcript
+(`transcript_available: false`), it returns `fallback_hint: no_transcript_use_whisper_on_video`
+and a `path` field pointing to the saved file. The whisper tool accepts both `audio_path`
+and `path`, so the handoff is direct — no copy or rename needed.
+
+To use both tools together, compose all three bundles:
+
+```yaml
+includes:
+  - bundle: git+https://github.com/microsoft/amplifier-foundation@main
+  - bundle: git+https://github.com/robotdad/amplifier-youtube@main
+  - bundle: git+https://github.com/robotdad/amplifier-module-tool-whisper@main
+```
+
+With both tools in session, the AI will:
+1. Download the video and attempt to fetch a YouTube transcript
+2. If no transcript is available, automatically pass the saved file to whisper
 
 ```
-> Transcribe all MP3 files in the meetings/ directory
+> Download and transcribe https://youtube.com/watch?v=...
+> Download this podcast episode and transcribe it: https://...
 ```
-
-The AI will process multiple files sequentially, saving each transcript.
-
-## Cost Awareness
-
-Whisper API costs $0.006 per minute of audio. The tool provides cost estimates:
-
-- 10-minute file: ~$0.06
-- 60-minute podcast: ~$0.36
-- 2-hour meeting: ~$0.72
 
 ## Troubleshooting
 
-### "API key not found"
-
-Set your OpenAI API key:
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
-### "Audio file too large"
-
-Whisper has a 25MB limit. Compress large files:
-```bash
-ffmpeg -i large-audio.wav -b:a 64k output.mp3
-```
-
-### "Transcription failed"
-
-The tool automatically retries transient failures. If it fails after retries, check:
-- API key is valid
-- Audio file is accessible
-- File format is supported (mp3, wav, m4a, etc.)
-
-## Learn More
-
-- [OpenAI Whisper Documentation](https://platform.openai.com/docs/guides/speech-to-text)
-- [Amplifier Profiles Guide](https://github.com/microsoft/amplifier-dev/docs/profiles.md)
-- [Tool Development](https://github.com/microsoft/amplifier-dev/docs/tool-development.md)
+| Problem | Fix |
+|---------|-----|
+| "OPENAI_API_KEY not set" | `export OPENAI_API_KEY="sk-..."` |
+| "File too large" (>25 MB) | Compress: `ffmpeg -i input -b:a 64k output.mp3` |
+| "File not found" | Use an absolute path or check the working directory |
+| Inaccurate transcription | Pass a language hint in your request, e.g. "transcribe in French" |

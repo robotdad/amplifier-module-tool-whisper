@@ -1,20 +1,34 @@
-# Amplifier Whisper Tool Module
+# Amplifier Whisper Module
 
-Speech-to-text transcription using OpenAI's Whisper API.
+Transcription tool for Amplifier — convert audio files to text using the OpenAI Whisper API.
 
-## Features
+## Tool
 
-- **Accurate transcription** - Powered by OpenAI Whisper API
-- **Timestamped segments** - Get precise timing for each segment
-- **Multiple languages** - Supports 99+ languages via Whisper
-- **Cost estimation** - Know the API cost before transcribing
-- **Automatic retry** - Handles transient API failures
+### whisper — Transcribe Audio
+
+- **Speech-to-text** — Transcribe audio or video files to plain text
+- **Multi-language** — Supports 99+ languages; auto-detects language by default
+- **Timestamped output** — Saves `.transcript.txt` to the configured output directory
+- **youtube-dl handoff** — Accepts `audio_path` or `path` (the `path` key returned by
+  `youtube-dl` when `transcript_available: false`)
+
+**Parameters:**
+- `audio_path` or `path` (required): Path to the audio or video file to transcribe
+- `language` (optional): Language code to hint detection, e.g. `"en"`, `"fr"`, `"es"` (default: auto-detect)
+
+**Result fields:**
+- `text`: Full transcript text
+- `transcript_path`: Path to the saved `.transcript.txt` file
+- `duration`: Audio duration in seconds
+- `language`: Detected or specified language code
+- `cost_usd`: Estimated API cost in USD
 
 ## Prerequisites
 
 - **Python 3.11+**
-- **[UV](https://github.com/astral-sh/uv)** - Fast Python package manager
-- **OpenAI API key** - Set as `OPENAI_API_KEY` environment variable
+- **[UV](https://github.com/astral-sh/uv)** — Fast Python package manager
+- **OpenAI API key** — Set as `OPENAI_API_KEY` (see [Configuration](#configuration))
+- **amplifier-core ≥ 1.6** — Provided by the Amplifier runtime (not a declared package dependency)
 
 ### Installing UV
 
@@ -34,91 +48,91 @@ uv pip install -e .
 
 ## Usage
 
-### As an Amplifier Tool
+### As an Amplifier Bundle (ad-hoc use)
 
-```python
-from amplifier_module_tool_whisper import WhisperTool
-
-# Create tool with config
-tool = WhisperTool({
-    "output_dir": "~/transcripts",
-    "model": "whisper-1"
-})
-
-# Transcribe audio
-result = await tool.execute({
-    "audio_path": "audio.mp3",
-    "language": "en"  # Optional
-})
-
-# Result includes:
-# - text: Full transcript
-# - segments: Timestamped segments
-# - duration: Audio duration in seconds
-# - language: Detected/specified language
-# - cost: API cost in USD
+```bash
+amplifier run --bundle git+https://github.com/robotdad/amplifier-module-tool-whisper@main \
+  "Transcribe meeting-recording.mp3"
 ```
 
-### In an Amplifier Profile
+### Adding to Your Own Bundle
 
-Create `~/.amplifier/profiles/transcribe.md`:
+Include the `whisper` behavior in your bundle to add the transcription tool:
 
 ```yaml
----
-profile:
-  name: transcribe
-  extends: base
+includes:
+  - bundle: git+https://github.com/microsoft/amplifier-foundation@main
+  - bundle: git+https://github.com/robotdad/amplifier-module-tool-whisper@main
+```
+
+See [`examples/whisper.md`](examples/whisper.md) for a ready-to-run example bundle, including
+the download→transcribe pattern when combining with `amplifier-youtube`.
+
+### Custom Configuration
+
+Override defaults by adding a `tools:` section:
+
+```yaml
+includes:
+  - bundle: git+https://github.com/microsoft/amplifier-foundation@main
+  - bundle: git+https://github.com/robotdad/amplifier-module-tool-whisper@main
 
 tools:
   - module: tool-whisper
     source: git+https://github.com/robotdad/amplifier-module-tool-whisper@main
     config:
-      output_dir: ~/transcripts
----
-
-# Transcription Profile
-
-Enables speech-to-text transcription in amplifier sessions.
-```
-
-Then use in conversation:
-
-```bash
-amplifier run --profile transcribe
-> "Transcribe audio.mp3"
+      output_dir: ~/my-transcripts
+      model: whisper-1
 ```
 
 ## Configuration
 
-Tool configuration options:
+| Key | Default | Description |
+|-----|---------|-------------|
+| `output_dir` | `~/transcripts` | Directory where `.transcript.txt` files are saved |
+| `model` | `whisper-1` | Whisper model (currently only `whisper-1` is available) |
+| `api_key` | — | OpenAI API key. Falls back to the `OPENAI_API_KEY` env var if not set in config. |
 
-- `output_dir`: Where to save transcripts (default: `~/transcripts`)
-- `model`: Whisper model to use (default: `whisper-1`)
-
-## API Limits
-
-OpenAI Whisper API has a 25MB file size limit. The tool validates file size before submitting.
-
-If your audio exceeds 25MB, compress it first:
+**Where to put the key.** The key is resolved in this order: (1) `api_key` in your bundle/module
+config, then (2) the `OPENAI_API_KEY` environment variable. **Prefer the env var** so the secret
+never lands in a committed YAML file:
 
 ```bash
-ffmpeg -i input.wav -b:a 64k -ar 16000 output.mp3
+export OPENAI_API_KEY="sk-..."   # in your shell profile, .env, or secret manager
 ```
 
-For current pricing information, check [OpenAI's pricing page](https://openai.com/pricing).
+## File Size Limit
 
-## Event Emission
+The OpenAI Whisper API enforces a hard **25 MB** limit per file. The tool validates file size
+before uploading and returns an error if the limit is exceeded.
 
-Emits standard amplifier events:
+For longer recordings or high-bitrate formats, compress with ffmpeg before transcribing:
 
-- `tool:pre` - Before transcription starts
-- `tool:post` - After successful transcription
-- `tool:error` - On transcription failure
+```bash
+ffmpeg -i input.wav -b:a 64k output.mp3
+```
+
+At 64 kbps, one hour of audio is approximately 28 MB — use 48 kbps if that is still over the
+limit. Voice-only audio remains intelligible at these bitrates.
+
+## Cost
+
+Whisper API pricing is **~$0.006 per minute** of audio. The tool reports `cost_usd` in every result.
+
+| File length | Approximate cost |
+|-------------|-----------------|
+| 10 minutes  | ~$0.06          |
+| 1 hour      | ~$0.36          |
+| 2 hours     | ~$0.72          |
+
+For current pricing, see [OpenAI's pricing page](https://openai.com/pricing).
 
 ## Dependencies
 
-- `openai>=1.0.0` - OpenAI API client
-- `amplifier-core` - Core amplifier functionality
+- `openai>=1.0.0` — OpenAI API client
+
+> **Note:** `amplifier-core` is a peer dependency provided by the Amplifier runtime — it is not
+> listed as a Python package dependency of this module. Requires amplifier-core ≥ 1.6.
 
 ## Contributing
 

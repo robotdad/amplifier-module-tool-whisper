@@ -4,6 +4,7 @@ Whisper Tool - Amplifier Tool Protocol Wrapper
 Wraps WhisperTranscriber in Amplifier Tool protocol for use in profiles.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,9 @@ class WhisperTool:
     def __init__(self, config: dict[str, Any] | None = None):
         """Initialize Whisper tool.
 
+        The transcriber is constructed lazily on first execute() so that
+        module load succeeds even when OPENAI_API_KEY is not set.
+
         Args:
             config: Optional configuration with keys:
                 - output_dir: Directory to save transcripts (default: ~/transcripts)
@@ -31,10 +35,28 @@ class WhisperTool:
         self.output_dir = Path(config.get("output_dir", "~/transcripts")).expanduser()
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        model = config.get("model", "whisper-1")
-        api_key = config.get("api_key")
+        self._model = config.get("model", "whisper-1")
+        self._api_key = config.get("api_key")
+        self._transcriber: WhisperTranscriber | None = None  # Lazily constructed
 
-        self.transcriber = WhisperTranscriber(api_key=api_key, model=model)
+    def _get_transcriber(self) -> WhisperTranscriber | None:
+        """Lazily construct the WhisperTranscriber.
+
+        Returns None (rather than raising) when the OpenAI API key is absent,
+        allowing execute() to surface a clean ToolResult error instead of a
+        module-load crash.
+        """
+        if self._transcriber is None:
+            try:
+                self._transcriber = WhisperTranscriber(api_key=self._api_key, model=self._model)
+            except ValueError:
+                return None
+        return self._transcriber
+
+    @property
+    def transcriber(self) -> WhisperTranscriber | None:
+        """Return the underlying transcriber instance (None if not yet built)."""
+        return self._transcriber
 
     @property
     def name(self) -> str:
@@ -52,6 +74,7 @@ class WhisperTool:
         Args:
             input: Input parameters:
                 - audio_path (required): Path to audio file
+                  (alias: path — accepts the 'path' key emitted by youtube-dl)
                 - language (optional): Language code (e.g., 'en')
                 - prompt (optional): Prompt to guide transcription
                 - max_retries (optional): Maximum retry attempts (default: 3)
@@ -65,9 +88,21 @@ class WhisperTool:
                 - cost: Estimated API cost in USD
         """
         try:
-            audio_path = input.get("audio_path")
+            audio_path = input.get("audio_path") or input.get("path")
             if not audio_path:
-                return ToolResult(success=False, error={"message": "audio_path is required", "type": "ValueError"})
+                return ToolResult(
+                    success=False, error={"message": "audio_path or path is required", "type": "ValueError"}
+                )
+
+            transcriber = self._get_transcriber()
+            if transcriber is None:
+                return ToolResult(
+                    success=False,
+                    error={
+                        "message": "OpenAI API key required. Set OPENAI_API_KEY environment variable.",
+                        "type": "ValueError",
+                    },
+                )
 
             language = input.get("language")
             prompt = input.get("prompt")
@@ -76,13 +111,17 @@ class WhisperTool:
             audio_path = Path(audio_path).expanduser()
             logger.info(f"Starting transcription: {audio_path.name}")
 
-            transcript = self.transcriber.transcribe(
-                audio_path=audio_path, language=language, prompt=prompt, max_retries=max_retries
+            transcript = await asyncio.to_thread(
+                transcriber.transcribe,
+                audio_path=audio_path,
+                language=language,
+                prompt=prompt,
+                max_retries=max_retries,
             )
 
             cost = 0.0
             if transcript.duration:
-                cost = self.transcriber.estimate_cost(transcript.duration)
+                cost = transcriber.estimate_cost(transcript.duration)
 
             output = {
                 "text": transcript.text,

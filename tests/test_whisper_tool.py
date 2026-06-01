@@ -2,12 +2,13 @@
 Tests for WhisperTool
 """
 
+import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from amplifier_module_tool_whisper import Transcript, TranscriptSegment, WhisperTool
+from amplifier_module_tool_whisper import Transcript, TranscriptSegment, WhisperTool, mount
 
 
 @pytest.fixture
@@ -28,9 +29,16 @@ def mock_openai_response():
 
 @pytest.fixture
 def whisper_tool(tmp_path):
-    """Create WhisperTool instance with temp output dir."""
-    config = {"output_dir": str(tmp_path / "transcripts"), "model": "whisper-1"}
-    return WhisperTool(config)
+    """Create WhisperTool instance with temp output dir.
+
+    Pre-builds the transcriber (with patched OpenAI) so that tests can
+    patch instance methods like .transcriber.transcribe directly.
+    """
+    config = {"output_dir": str(tmp_path / "transcripts"), "model": "whisper-1", "api_key": "test-key"}
+    with patch("amplifier_module_tool_whisper.core.OpenAI"):
+        tool = WhisperTool(config)
+        tool._get_transcriber()  # eagerly build so .transcriber is non-None for patching
+    return tool
 
 
 def test_whisper_tool_initialization(tmp_path):
@@ -47,18 +55,18 @@ def test_whisper_tool_initialization(tmp_path):
 
 def test_whisper_tool_default_config():
     """Test WhisperTool with default configuration."""
-    with patch("amplifier_module_tool_whisper.core.OpenAI"):
-        tool = WhisperTool()
-        assert tool.output_dir == Path("~/transcripts").expanduser()
+    # Lazy construction: __init__ no longer touches OpenAI
+    tool = WhisperTool()
+    assert tool.output_dir == Path("~/transcripts").expanduser()
 
 
 @pytest.mark.asyncio
 async def test_execute_missing_audio_path(whisper_tool):
-    """Test execute() with missing audio_path."""
+    """Test execute() with missing audio_path and missing path alias."""
     result = await whisper_tool.execute({})
     assert result.success is False
     assert result.error["type"] == "ValueError"
-    assert "audio_path is required" in result.error["message"]
+    assert "audio_path" in result.error["message"]
 
 
 @pytest.mark.asyncio
@@ -138,15 +146,16 @@ def test_cost_estimation():
     """Test cost estimation logic."""
     with patch("amplifier_module_tool_whisper.core.OpenAI"):
         tool = WhisperTool({"api_key": "test-key"})
+        tool._get_transcriber()  # build within patch scope
 
-        cost_1min = tool.transcriber.estimate_cost(60)
-        assert abs(cost_1min - 0.006) < 0.0001
+    cost_1min = tool.transcriber.estimate_cost(60)
+    assert abs(cost_1min - 0.006) < 0.0001
 
-        cost_10min = tool.transcriber.estimate_cost(600)
-        assert abs(cost_10min - 0.06) < 0.0001
+    cost_10min = tool.transcriber.estimate_cost(600)
+    assert abs(cost_10min - 0.06) < 0.0001
 
-        cost_half_min = tool.transcriber.estimate_cost(30)
-        assert abs(cost_half_min - 0.003) < 0.0001
+    cost_half_min = tool.transcriber.estimate_cost(30)
+    assert abs(cost_half_min - 0.003) < 0.0001
 
 
 @pytest.mark.asyncio
@@ -174,6 +183,63 @@ def test_file_size_validation(tmp_path):
 
     with patch("amplifier_module_tool_whisper.core.OpenAI"):
         tool = WhisperTool({"api_key": "test-key"})
+        tool._get_transcriber()  # build within patch scope
 
         with pytest.raises(ValueError, match="too large"):
             tool.transcriber.transcribe(audio_file)
+
+
+# ---------------------------------------------------------------------------
+# New tests: mount(), path alias, missing-key graceful handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mount_registers_tool():
+    """mount() must register the tool via coordinator.mount with name=tool.name ('whisper')."""
+    coordinator = MagicMock()
+    coordinator.mount = AsyncMock()
+
+    await mount(coordinator, {})
+
+    coordinator.mount.assert_called_once()
+    call_args = coordinator.mount.call_args
+    # First positional arg is the mount-point category ("tools")
+    assert call_args.args[0] == "tools"
+    # The name kwarg must equal the tool's .name property
+    assert call_args.kwargs["name"] == "whisper"
+
+
+@pytest.mark.asyncio
+async def test_execute_path_alias(whisper_tool, tmp_path):
+    """'path' key must be accepted as an alias for 'audio_path' (youtube-dl handoff)."""
+    audio_file = tmp_path / "test.mp3"
+    audio_file.write_bytes(b"fake audio data")
+
+    with patch.object(whisper_tool.transcriber, "transcribe") as mock_transcribe:
+        transcript = Transcript(text="From path alias", language="en", duration=5.0, segments=[])
+        mock_transcribe.return_value = transcript
+
+        result = await whisper_tool.execute({"path": str(audio_file)})
+
+        assert result.success is True
+        assert result.output["text"] == "From path alias"
+
+
+@pytest.mark.asyncio
+async def test_execute_missing_key_returns_tool_result(tmp_path):
+    """Missing OPENAI_API_KEY must return ToolResult(success=False) rather than raising."""
+    audio_file = tmp_path / "test.mp3"
+    audio_file.write_bytes(b"fake audio data")
+
+    config = {"output_dir": str(tmp_path / "transcripts")}
+    # Remove OPENAI_API_KEY from env for the duration of this test
+    env_without_key = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
+    with patch.dict("os.environ", env_without_key, clear=True):
+        tool = WhisperTool(config)  # no api_key in config, none in env
+        result = await tool.execute({"audio_path": str(audio_file)})
+
+    assert result.success is False
+    assert result.error is not None
+    assert "API key" in result.error["message"]
+    assert result.error["type"] == "ValueError"

@@ -1,0 +1,16 @@
+bundle:
+  name: whisper-behavior
+  version: 1.0.0
+  description: Adds OpenAI Whisper audio transcription to any Amplifier session
+
+tools:
+  - module: tool-whisper
+    source: git+https://github.com/robotdad/amplifier-module-tool-whisper@main
+    config:
+      output_dir: ~/transcripts
+      model: whisper-1
+      # api_key: sk-...         # omit — prefer the OPENAI_API_KEY env var for secret hygiene
+
+context:
+  include:
+    - whisper:context/instructions.md
