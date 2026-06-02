@@ -120,7 +120,10 @@ async def test_execute_success(whisper_tool, mock_openai_response, tmp_path):
         assert result.output["duration"] == 10.5
         assert len(result.output["segments"]) == 1
         assert result.output["segments"][0]["text"] == "Test transcript"
-        assert result.output["cost"] > 0
+        assert result.output["cost_usd"] > 0
+        # Transcript is persisted to output_dir and its path returned.
+        assert result.output["transcript_path"].endswith("test.transcript.txt")
+        assert Path(result.output["transcript_path"]).read_text() == "Test transcript"
 
 
 @pytest.mark.asyncio
@@ -215,11 +218,6 @@ def test_file_size_validation(tmp_path):
 
         with pytest.raises(ValueError, match="too large"):
             tool.transcriber.transcribe(audio_file)
-
-
-# ---------------------------------------------------------------------------
-# New tests: mount(), path alias, missing-key graceful handling
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

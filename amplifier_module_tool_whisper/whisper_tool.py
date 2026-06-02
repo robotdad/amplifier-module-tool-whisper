@@ -115,10 +115,11 @@ class WhisperTool:
         Returns:
             ToolResult with output containing:
                 - text: Full transcript text
+                - transcript_path: Path to the saved .transcript.txt file
                 - segments: List of timestamped segments
                 - duration: Audio duration in seconds
                 - language: Detected or specified language
-                - cost: Estimated API cost in USD
+                - cost_usd: Estimated API cost in USD
         """
         try:
             audio_path = input.get("audio_path") or input.get("path")
@@ -152,21 +153,27 @@ class WhisperTool:
                 max_retries=max_retries,
             )
 
-            cost = 0.0
+            cost_usd = 0.0
             if transcript.duration:
-                cost = transcriber.estimate_cost(transcript.duration)
+                cost_usd = transcriber.estimate_cost(transcript.duration)
+
+            # Persist the transcript next to the configured output_dir so callers
+            # (and the youtube-dl -> whisper handoff) get a stable file path back.
+            transcript_path = self.output_dir / f"{audio_path.stem}.transcript.txt"
+            transcript_path.write_text(transcript.text, encoding="utf-8")
 
             output = {
                 "text": transcript.text,
+                "transcript_path": str(transcript_path),
                 "segments": [
                     {"id": seg.id, "start": seg.start, "end": seg.end, "text": seg.text} for seg in transcript.segments
                 ],
                 "duration": transcript.duration,
                 "language": transcript.language,
-                "cost": cost,
+                "cost_usd": cost_usd,
             }
 
-            logger.info(f"Transcription successful: {len(transcript.text)} chars, ${cost:.4f}")
+            logger.info(f"Transcription successful: {len(transcript.text)} chars, ${cost_usd:.4f} -> {transcript_path}")
             return ToolResult(success=True, output=output)
 
         except ValueError as e:

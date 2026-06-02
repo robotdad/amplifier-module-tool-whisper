@@ -28,7 +28,7 @@ Transcription tool for Amplifier — convert audio files to text using the OpenA
 - **Python 3.11+**
 - **[UV](https://github.com/astral-sh/uv)** — Fast Python package manager
 - **OpenAI API key** — Set as `OPENAI_API_KEY` (see [Configuration](#configuration))
-- **amplifier-core ≥ 1.6** — Provided by the Amplifier runtime (not a declared package dependency)
+- **amplifier-core** — Provided by the Amplifier runtime (not a declared package dependency)
 
 ### Installing UV
 
@@ -132,7 +132,7 @@ For current pricing, see [OpenAI's pricing page](https://openai.com/pricing).
 - `openai>=1.0.0` — OpenAI API client
 
 > **Note:** `amplifier-core` is a peer dependency provided by the Amplifier runtime — it is not
-> listed as a Python package dependency of this module. Requires amplifier-core ≥ 1.6.
+> listed as a Python package dependency of this module.
 
 ## Contributing
 
