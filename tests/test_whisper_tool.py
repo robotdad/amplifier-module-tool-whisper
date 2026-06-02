@@ -60,6 +60,34 @@ def test_whisper_tool_default_config():
     assert tool.output_dir == Path("~/transcripts").expanduser()
 
 
+def test_tool_protocol_surface():
+    """Regression: tool must expose the full Tool protocol surface.
+
+    The orchestrator introspects ``input_schema`` at session init to advertise
+    the tool to the LLM. A missing ``input_schema`` crashes EVERY session that
+    composes this tool (AttributeError), not just whisper invocations. Lazy
+    construction means no OPENAI_API_KEY is required to read these attributes.
+    """
+    tool = WhisperTool()
+
+    assert tool.name == "whisper"
+    assert isinstance(tool.description, str) and tool.description
+
+    schema = tool.input_schema
+    assert isinstance(schema, dict)
+    assert schema["type"] == "object"
+    assert isinstance(schema["properties"], dict)
+    # Both the canonical key and the youtube-dl handoff alias are advertised.
+    assert "audio_path" in schema["properties"]
+    assert "path" in schema["properties"]
+    assert isinstance(schema.get("required", []), list)
+
+    # execute() must be an awaitable coroutine function.
+    import inspect
+
+    assert inspect.iscoroutinefunction(tool.execute)
+
+
 @pytest.mark.asyncio
 async def test_execute_missing_audio_path(whisper_tool):
     """Test execute() with missing audio_path and missing path alias."""

@@ -68,6 +68,39 @@ class WhisperTool:
         """Human-readable tool description."""
         return "Transcribe audio using OpenAI Whisper API"
 
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        """JSON schema describing the tool's input parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "audio_path": {
+                    "type": "string",
+                    "description": (
+                        "Path to the audio file to transcribe "
+                        "(alias: 'path' — accepts the 'path' key emitted by youtube-dl)."
+                    ),
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Alias for audio_path (the key emitted by youtube-dl).",
+                },
+                "language": {
+                    "type": "string",
+                    "description": "Optional ISO 639-1 language code (e.g., 'en') to guide transcription.",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Optional prompt to guide transcription style or vocabulary.",
+                },
+                "max_retries": {
+                    "type": "integer",
+                    "description": "Maximum retry attempts on transient failures (default: 3).",
+                },
+            },
+            "required": [],
+        }
+
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         """Execute Whisper transcription.
 
