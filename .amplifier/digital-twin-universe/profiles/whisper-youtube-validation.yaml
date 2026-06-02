@@ -1,0 +1,116 @@
+# Digital Twin Universe validation profile: youtube-dl -> whisper handoff
+#
+# Validates, against a clean isolated Amplifier install, that:
+#   A. The whisper module loads + mounts under current amplifier-core without
+#      crashing session init (regression: a missing `input_schema` property
+#      crashed EVERY session at startup because core introspects each composed
+#      tool's input_schema to advertise it to the LLM).
+#   B. End-to-end: youtube-dl downloads audio from a short public YouTube clip,
+#      then whisper transcribes that file via the `path` alias (youtube-dl emits
+#      `path`; whisper accepts `path` or `audio_path`).
+#   C. The whisper result honors the (just-fixed) output contract:
+#        - `transcript_path` is set AND a non-empty file exists at that path
+#          (output_dir was previously created but never written to),
+#        - `cost_usd` is present (renamed from the old `cost` key),
+#        - `text` is non-empty.
+#
+# This profile is SHAREABLE / environment-agnostic: it embeds no secrets, no
+# host paths, and no Gitea endpoint. Those are injected at launch time.
+#
+# REQUIRED out-of-band state at launch:
+#   --var GITEA_URL=http://<host-ip>:<port>   Gitea endpoint reachable from the
+#                                             Incus container (e.g. the Incus
+#                                             bridge gateway, http://10.x.x.1:10110).
+#                                             `localhost` is auto-rewritten to the
+#                                             host gateway and also works.
+#   --var GITEA_TOKEN=<token>                 Gitea admin token (Basic auth for
+#                                             url_rewrites).
+#   env OPENAI_API_KEY                        Present on the host; forwarded via
+#                                             passthrough. Used by BOTH the OpenAI
+#                                             provider (so `amplifier run` can
+#                                             initialize a session) AND the whisper
+#                                             tool (hosted whisper-1).
+#
+# Gitea must already mirror these two repos at the commits under test:
+#   admin/amplifier-module-tool-whisper   (robotdad/amplifier-module-tool-whisper)
+#   admin/amplifier-youtube               (robotdad/amplifier-youtube)
+#
+# Example launch:
+#   amplifier-digital-twin launch \
+#     .amplifier/digital-twin-universe/profiles/whisper-youtube-validation.yaml \
+#     --var GITEA_URL=http://10.87.34.1:10110 \
+#     --var GITEA_TOKEN=<token> \
+#     --name whisper-youtube-validation
+
+name: whisper-youtube-validation
+description: >
+  Validate the youtube-dl -> whisper end-to-end handoff and the whisper output
+  contract (transcript_path file written, cost_usd key, non-empty text) against
+  local committed changes mirrored to Gitea.
+
+base:
+  image: ubuntu:24.04
+
+# Redirect the robotdad GitHub repos to their Gitea mirrors so the DTU consumes
+# the local committed (unpushed) changes. boundary mode scopes each rule to its
+# exact repo so siblings are never captured and the admin token is not leaked.
+url_rewrites:
+  auth:
+    username: admin
+    token_var: GITEA_TOKEN
+  default_match_mode: boundary
+  rules:
+    - match: github.com/robotdad/amplifier-module-tool-whisper
+      target: ${GITEA_URL}/admin/amplifier-module-tool-whisper
+    - match: github.com/robotdad/amplifier-youtube
+      target: ${GITEA_URL}/admin/amplifier-youtube
+
+passthrough:
+  allow_external: true
+  services:
+    - name: openai
+      key_env: OPENAI_API_KEY
+
+provision:
+  setup_cmds:
+    # System deps. ffmpeg is REQUIRED for youtube-dl audio extraction.
+    - apt-get update && apt-get install -y git curl ffmpeg
+
+    # Install uv, then the Amplifier CLI from upstream.
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - uv tool install git+https://github.com/microsoft/amplifier
+
+    # Configure the OpenAI provider so `amplifier run` sessions can initialize.
+    # $OPENAI_API_KEY is forwarded via passthrough.services.
+    - |
+      mkdir -p /root/.amplifier
+      cat > /root/.amplifier/settings.yaml << EOF
+      config:
+        providers:
+          - module: provider-openai
+            source: git+https://github.com/microsoft/amplifier-module-provider-openai@main
+            config:
+              api_key: ${OPENAI_API_KEY}
+              default_model: gpt-5.5
+      EOF
+
+    # Compose both bundles onto every session (url_rewrites redirects each to
+    # its Gitea mirror). Adding both with --app means any `amplifier run`
+    # composes foundation + youtube + whisper -- which exercises validation A
+    # (whisper mounted at session init).
+    - amplifier bundle add git+https://github.com/robotdad/amplifier-youtube@main --app
+    - amplifier bundle add git+https://github.com/robotdad/amplifier-module-tool-whisper@main --app
+
+    # Sanity checks.
+    - amplifier --version
+    - amplifier bundle list
+
+update:
+  cmds:
+    - amplifier update --yes --force
+
+readiness:
+  - name: amplifier-installed
+    command: amplifier --version
+  - name: ffmpeg-installed
+    command: ffmpeg -version
